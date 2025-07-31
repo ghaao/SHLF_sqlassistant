@@ -1,0 +1,35 @@
+# 애플리케이션을 위한 네트워크 정의
+networks:
+  sqlAssistant: # <-- 이름 변경
+    driver: bridge
+
+services:
+  sql-assistant:
+    image: sql-assistant:latest
+    container_name: sql-assistant-app
+    ports:
+      - "18028:5000"
+    environment:
+      - NODE_ENV=production
+      # - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
+      - DATABASE_URL=mysql://A_APP_ISA:4rfvVFR$@10.172.33.140:19001/sql_assistant
+      # 내부 AI API 설정
+      - AI_API_BASE_URL=http://10.172.33.161:18020/v1/chat-messages
+      - SQL_ASSISTANT_API_KEY_SQL_EXPLANATION=app-A7SwTtuSRCjcd9FKy7knOygF
+      - SQL_ASSISTANT_API_KEY_SQL_GRAMMAR=app-Cu9GVFRLHL36K8urqbIJKqi5
+      - SQL_ASSISTANT_API_KEY_SQL_COMMENT=app-nDvxBkojarVUnAnY9mCJFMzw
+      - SQL_ASSISTANT_API_KEY_SQL_TRANSFORMATION=app-FtuiuxFKVfMQOTykoTkHz68e
+      - SQL_ASSISTANT_API_KEY_SQL_CREATION=app-MKiOOiO6IJtb3atcWOXtEfN8
+      - OPENAI_API_KEY=your_openai_api_key
+      - SESSION_SECRET=a-very-secret-key-that-you-should-change
+      - TZ=Asia/Seoul# 애플리케이션을 위한 네트워크 정의
+    depends_on:
+      db: # <-- db 서비스를 의존하도록 수정
+        condition: service_healthy # db 서비스가 'healthy' 상태가 될 때까지 기다림
+    restart: unless-stopped
+    networks:
+      - sqlAssistant
+      
+volumes:
+  postgres_data:
+  pgadmin_data:

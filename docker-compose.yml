@@ -1,0 +1,76 @@
+# 애플리케이션을 위한 네트워크 정의
+networks:
+  sqlAssistant:
+    driver: bridge
+
+services:
+  sql-assistant:
+    build: .
+    container_name: sql-assistant-app
+    image: sql-assistant:latest
+    ports:
+      - "18028:5000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=mysql://A_APP_ISA:4rfvVFR$@db:3306/sql_assistant
+      # !중요: 아래 값들을 실제 환경에 맞게 수정하세요.
+      - AI_API_BASE_URL=http://10.172.33.161:18020/v1/chat-messages
+      - SQL_ASSISTANT_API_KEY_SQL_EXPLANATION=app-A7SwTtuSRCjcd9FKy7knOygF
+      - SQL_ASSISTANT_API_KEY_SQL_GRAMMAR=app-Cu9GVFRLHL36K8urqbIJKqi5
+      - SQL_ASSISTANT_API_KEY_SQL_COMMENT=app-nDvxBkojarVUnAnY9mCJFMzw
+      - SQL_ASSISTANT_API_KEY_SQL_TRANSFORMATION=app-FtuiuxFKVfMQOTykoTkHz68e
+      - SQL_ASSISTANT_API_KEY_SQL_CREATION=app-MKiOOiO6IJtb3atcWOXtEfN8
+
+
+      - OPENAI_API_KEY=your_openai_api_key
+      - SESSION_SECRET=a-very-secret-key-that-you-should-change
+      - TZ=Asia/Seoul
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - sqlAssistant
+
+  db:
+    image: mysql:8.0.30
+    container_name: sql-assistant-db
+    ports:
+      - "19001:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=4rfvVFR$
+      - MYSQL_DATABASE=sql_assistant
+      - MYSQL_USER=A_APP_ISA
+      - MYSQL_PASSWORD=4rfvVFR$
+      - TZ=Asia/Seoul
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p4rfvVFR$"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - sqlAssistant
+    command: --default-authentication-plugin=mysql_native_password
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: sql-assistant-phpmyadmin
+    environment:
+      - PMA_HOST=db
+      - PMA_PORT=3306
+      - PMA_USER=root
+      - PMA_PASSWORD=4rfvVFR$
+      - TZ=Asia/Seoul
+    ports:
+      - "18030:80"
+    depends_on:
+      - db
+    restart: unless-stopped
+    networks:
+      - sqlAssistant
+
+volumes:
+  mysql_data:
