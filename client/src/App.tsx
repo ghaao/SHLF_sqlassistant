@@ -5,6 +5,9 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/hooks/useTheme";
+import './styles/loading.css';
+
+
 import ChatPage from "@/pages/chat";
 import HistoryPage from "@/pages/history";
 import FavoritesPage from "@/pages/favorites";

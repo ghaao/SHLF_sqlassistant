@@ -207,7 +207,7 @@ export default function SchemaManagerPage() {
                       <FormItem>
                         <FormLabel>Description</FormLabel>
                         <FormControl>
-                          <Textarea placeholder="Describe your database schema..." {...field} />
+                          <Textarea placeholder="Describe your database schema..." {...field} value={field.value || ''} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -272,7 +272,7 @@ export default function SchemaManagerPage() {
         </div>
 
         <div className="space-y-4">
-          {schemas?.map((schema: DatabaseSchema) => (
+          {(schemas as DatabaseSchema[])?.map((schema: DatabaseSchema) => (
             <Card
               key={schema.id}
               className={`cursor-pointer transition-colors hover:bg-muted/50 ${
@@ -328,7 +328,7 @@ export default function SchemaManagerPage() {
           ))}
         </div>
 
-        {schemas?.length === 0 && (
+        {Array.isArray(schemas) && schemas.length === 0 && (
           <div className="text-center py-8">
             <Database className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <p className="text-muted-foreground mb-2">No database schemas yet</p>
@@ -412,7 +412,7 @@ export default function SchemaManagerPage() {
                   <FormItem>
                     <FormLabel>Description</FormLabel>
                     <FormControl>
-                      <Textarea placeholder="Describe your database schema..." {...field} />
+                      <Textarea placeholder="Describe your database schema..." {...field} value={field.value || ''} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

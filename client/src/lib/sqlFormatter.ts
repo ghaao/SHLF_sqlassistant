@@ -238,7 +238,7 @@ export function formatSQL(sql: string, style: string = "standard", options?: For
   // Apply column alignment for SELECT statements
   if (formattingOptions.alignColumns && formatted.includes('SELECT')) {
     const lines = formatted.split('\n');
-    const alignedLines = [];
+    const alignedLines: string[] = [];
     let inSelectClause = false;
     
     lines.forEach(line => {
@@ -290,9 +290,9 @@ export function formatSQL(sql: string, style: string = "standard", options?: For
   }
 
   // Apply overall case conversion
-  if (options.caseConversion === 'upper') {
+  if (formattingOptions && formattingOptions.caseConversion === 'upper') {
     formatted = formatted.toUpperCase();
-  } else if (options.caseConversion === 'lower') {
+  } else if (formattingOptions && formattingOptions.caseConversion === 'lower') {
     formatted = formatted.toLowerCase();
   }
 
@@ -304,7 +304,7 @@ export function renderColoredSQL(sql: string, keywordColors: Record<string, stri
 
   const formattingOptions = getFormattingOptions();
   const keywords = Object.keys(keywordColors);
-  let parts = [sql];
+  let parts: (string | React.JSX.Element)[] = [sql];
   
   keywords.forEach(keyword => {
     const newParts: (string | React.JSX.Element)[] = [];

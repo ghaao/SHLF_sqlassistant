@@ -108,7 +108,7 @@ export default function ChartContainer({ data }: ChartContainerProps) {
               <YAxis />
               <Tooltip />
               <Bar 
-                dataKey={Object.keys(chartData.data[0]).find(key => !isNaN(Number(chartData.data[0][key])))} 
+                dataKey={Object.keys(chartData.data[0]).find(key => !isNaN(Number(chartData.data[0][key]))) || 'defaultKey'}
                 fill={colors[0]}
               />
             </BarChart>

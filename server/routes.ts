@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { openaiService } from "./services/openai";
+import { internalAIService } from "./services/sqlassistantai"; // 올바른 import 추가
 import { queryExecutor } from "./services/queryExecutor";
 import { seedDatabase } from "./seedData";
 import { nanoid } from "nanoid";
@@ -20,6 +20,12 @@ import { exec } from "child_process";
 export async function registerRoutes(app: Express): Promise<Server> {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
+  
+  // API 키 검증
+  const keyValidation = internalAIService.validateAPIKeys();
+  if (!keyValidation.isValid) {
+    console.warn('일부 AI API 키가 누락되었습니다:', keyValidation.missingKeys);
+  }
   
   // SQL 포맷팅을 위한 API 엔드포인트
   app.post('/api/format-sql', (req, res) => {
@@ -52,6 +58,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const activeRequests = new Map<string, boolean>();
 
   wss.on('connection', (ws: WebSocket) => {
     console.log('WebSocket client connected');
@@ -70,8 +77,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           case 'explain_sql':
             await handleExplainSQL(ws, data);
             break;
+          case 'cancel_request':
+            handleCancelRequest(data.requestId);
+            break;
           default:
-            ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
+            ws.send(JSON.stringify({ 
+              type: 'error', 
+              message: 'Unknown message type: ' + data.type 
+            }));
         }
       } catch (error) {
         ws.send(JSON.stringify({ 
@@ -83,10 +96,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     ws.on('close', () => {
       console.log('WebSocket client disconnected');
+      // 연결이 끊어지면 해당 클라이언트의 활성 요청들을 정리
+      // 실제 구현에서는 클라이언트별 요청 추적이 필요
     });
   });
 
-  // REST API Routes
+  // 요청 취소 핸들러
+  function handleCancelRequest(requestId: string) {
+    if (requestId && activeRequests.has(requestId)) {
+      activeRequests.set(requestId, false); // 요청을 취소됨으로 표시
+      console.log('Request cancelled:', requestId);
+    }
+  }
 
   // Schema management
   app.post('/api/schemas', async (req, res) => {
@@ -230,7 +251,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // SQL generation
+  // SQL generation - 내부 AI 서비스 사용
   app.post('/api/sql/generate', async (req, res) => {
     try {
       const request = z.object({
@@ -238,9 +259,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dialect: z.string().min(1),
         schemaId: z.number().optional(),
         schemaData: z.any().optional(),
+        mode: z.enum(['create', 'explain', 'grammar', 'comment', 'transform']).default('create'),
       }).parse(req.body);
       
-      const result = await openaiService.generateSQL(request);
+      let result;
+      
+      switch (request.mode) {
+        case 'explain':
+          const explanation = await internalAIService.explainSQL(request.naturalLanguage, request.dialect);
+          result = { explanation };
+          break;
+        case 'grammar':
+          const correctedSQL = await internalAIService.validateSQLGrammar(request.naturalLanguage, request.dialect);
+          result = { sqlQuery: correctedSQL };
+          break;
+        case 'comment':
+          const commentedSQL = await internalAIService.addSQLComments(request.naturalLanguage, request.dialect);
+          result = { sqlQuery: commentedSQL };
+          break;
+        case 'transform':
+          const transformedSQL = await internalAIService.convertSQLDialect(request.naturalLanguage, 'mysql', request.dialect);     
+          result = { sqlQuery: transformedSQL };
+          break;
+        case 'create':
+        default:
+          result = await internalAIService.generateSQL(request);
+          break;
+      }
+      
       res.json(result);
     } catch (error) {
       res.status(400).json({ message: "Failed to generate SQL: " + (error as Error).message });
@@ -254,7 +300,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         dialect: z.string().min(1),
       }).parse(req.body);
       
-      const explanation = await openaiService.explainSQL(sqlQuery, dialect);
+      const explanation = await internalAIService.explainSQL(sqlQuery, dialect);
       res.json({ explanation });
     } catch (error) {
       res.status(400).json({ message: "Failed to explain SQL: " + (error as Error).message });
@@ -269,10 +315,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         toDialect: z.string().min(1),
       }).parse(req.body);
       
-      const convertedQuery = await openaiService.convertSQLDialect(sqlQuery, fromDialect, toDialect);
+      const convertedQuery = await internalAIService.convertSQLDialect(sqlQuery, fromDialect, toDialect);
       res.json({ convertedQuery });
     } catch (error) {
       res.status(400).json({ message: "Failed to convert SQL: " + (error as Error).message });
+    }
+  });
+
+  app.post('/api/sql/comment', async (req, res) => {
+    try {
+      const { sqlQuery, dialect } = z.object({
+        sqlQuery: z.string().min(1),
+        dialect: z.string().min(1),
+      }).parse(req.body);
+      
+      const commentedQuery = await internalAIService.addSQLComments(sqlQuery, dialect);
+      res.json({ commentedQuery });
+    } catch (error) {
+      res.status(400).json({ message: "Failed to add comments to SQL: " + (error as Error).message });
     }
   });
 
@@ -371,18 +431,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // WebSocket message handlers
   async function handleGenerateSQL(ws: WebSocket, data: any) {
+    const requestId = data.requestId || Date.now().toString();
+    activeRequests.set(requestId, true);
+    
     try {
       const request: SQLGenerationRequest = data.payload;
-      const result = await openaiService.generateSQL(request);
+      const mode = data.mode || 'create'; // 기본값을 'create'로 변경
+      
+      // 요청이 취소되었는지 확인
+      if (!activeRequests.get(requestId)) {
+        return; // 취소된 요청은 처리하지 않음
+      }
+      
+      let result;
+      
+      switch (mode) {
+        case 'explain':
+          const explanation = await internalAIService.explainSQL(request.naturalLanguage, request.dialect);
+          result = { explanation };
+          break;
+        case 'grammar':
+          const correctedSQL = await internalAIService.validateSQLGrammar(request.naturalLanguage, request.dialect);
+          result = { sqlQuery: correctedSQL, dialect: request.dialect, confidence: 0.8 };
+          break;
+        case 'comment':
+          const commentedSQL = await internalAIService.addSQLComments(request.naturalLanguage, request.dialect);
+          result = { sqlQuery: commentedSQL, dialect: request.dialect, confidence: 0.8 };
+          break;
+        case 'transform':
+          const transformedSQL = await internalAIService.convertSQLDialect(request.naturalLanguage, 'mysql', request.dialect);     
+          result = { sqlQuery: transformedSQL, dialect: request.dialect, confidence: 0.8 };
+          break;
+        case 'create':
+        default:
+          result = await internalAIService.generateSQL(request);
+          break;
+      }
+      
+      // 다시 한번 취소 확인
+      if (!activeRequests.get(requestId)) {
+        return;
+      }
       
       // Save query to database for history
       try {
         await storage.createQuery({
           userId: "demo-user",
           naturalLanguage: request.naturalLanguage,
-          sqlQuery: result.sqlQuery,
-          dialect: result.dialect,
-          explanation: result.explanation,
+          sqlQuery: result.sqlQuery || '',
+          dialect: result.dialect || request.dialect,
+          explanation: result.explanation || '',
           schemaId: request.schemaId,
           isFavorite: false,
         });
@@ -390,24 +488,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('Failed to save query to database:', saveError);
       }
       
-      if (ws.readyState === WebSocket.OPEN) {
+      // 요청이 여전히 활성 상태인 경우에만 응답 전송
+      if (ws.readyState === WebSocket.OPEN && activeRequests.get(requestId)) {
         ws.send(JSON.stringify({
           type: 'sql_generated',
           payload: result,
-          requestId: data.requestId,
+          requestId: requestId,
         }));
       }
     } catch (error) {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN && activeRequests.get(requestId)) {
         ws.send(JSON.stringify({
           type: 'error',
           message: 'Failed to generate SQL: ' + (error as Error).message,
-          requestId: data.requestId,
+          requestId: requestId,
         }));
       }
+    } finally {
+      // 요청 완료 후 정리
+      activeRequests.delete(requestId);
     }
   }
-
+  
   async function handleExecuteQuery(ws: WebSocket, data: any) {
     try {
       const request: QueryExecutionRequest = data.payload;
@@ -434,7 +536,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   async function handleExplainSQL(ws: WebSocket, data: any) {
     try {
       const { sqlQuery, dialect } = data.payload;
-      const explanation = await openaiService.explainSQL(sqlQuery, dialect);
+      const explanation = await internalAIService.explainSQL(sqlQuery, dialect);
       
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({

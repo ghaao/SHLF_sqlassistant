@@ -95,7 +95,7 @@ export default function MessageBubble({ message, onExecuteQuery, selectedDialect
                               </tr>
                             </thead>
                             <tbody className="divide-y">
-                              {queryResult.data.slice(0, 10).map((row, index) => (
+                              {queryResult.data.slice(0, 10).map((row: any, index: number) => (
                                 <tr key={index}>
                                   {Object.values(row).map((value, colIndex) => (
                                     <td key={colIndex} className="px-3 py-2">

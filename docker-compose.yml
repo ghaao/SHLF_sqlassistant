@@ -13,7 +13,8 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=mysql://A_APP_ISA:4rfvVFR$@db:3306/sql_assistant
-      # !중요: 아래 값들을 실제 환경에 맞게 수정하세요.
+      
+      # SQL ASSISTANT API KEY Setting
       - AI_API_BASE_URL=http://10.172.33.161:18020/v1/chat-messages
       - SQL_ASSISTANT_API_KEY_SQL_EXPLANATION=app-A7SwTtuSRCjcd9FKy7knOygF
       - SQL_ASSISTANT_API_KEY_SQL_GRAMMAR=app-Cu9GVFRLHL36K8urqbIJKqi5
@@ -21,9 +22,6 @@ services:
       - SQL_ASSISTANT_API_KEY_SQL_TRANSFORMATION=app-FtuiuxFKVfMQOTykoTkHz68e
       - SQL_ASSISTANT_API_KEY_SQL_CREATION=app-MKiOOiO6IJtb3atcWOXtEfN8
 
-
-      - OPENAI_API_KEY=your_openai_api_key
-      - SESSION_SECRET=a-very-secret-key-that-you-should-change
       - TZ=Asia/Seoul
     depends_on:
       db:
@@ -36,7 +34,7 @@ services:
     image: mysql:8.0.30
     container_name: sql-assistant-db
     ports:
-      - "19001:3306"
+      - "18029:3306"
     environment:
       - MYSQL_ROOT_PASSWORD=4rfvVFR$
       - MYSQL_DATABASE=sql_assistant
