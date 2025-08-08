@@ -1,19 +1,5 @@
 import type { Config } from "tailwindcss";
 
-module.exports = {
-  theme: {
-    extend: {
-      animation: {
-        'pulse-soft': 'pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-        'progress-shine': 'progress-shine 2s infinite linear',
-        'slide-in-from-left': 'slide-in-from-left 0.3s ease-out forwards',
-        'zoom-in': 'zoom-in 0.2s ease-out forwards',
-        'bounce-subtle': 'bounce-subtle 1.4s infinite ease-in-out',
-      }
-    }
-  }
-}
-
 export default {
   darkMode: ["class"],
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
@@ -97,6 +83,11 @@ export default {
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
+        'pulse-soft': 'pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+        'progress-shine': 'progress-shine 2s infinite linear',
+        'slide-in-from-left': 'slide-in-from-left 0.3s ease-out forwards',
+        'zoom-in': 'zoom-in 0.2s ease-out forwards',
+        'bounce-subtle': 'bounce-subtle 1.4s infinite ease-in-out',
       },
     },
   },

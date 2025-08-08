@@ -5,16 +5,8 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/hooks/useTheme";
-import './styles/loading.css';
-
 
 import ChatPage from "@/pages/chat";
-import HistoryPage from "@/pages/history";
-import FavoritesPage from "@/pages/favorites";
-import SharedPage from "@/pages/shared";
-import VisualizationPage from "@/pages/visualization";
-import SchemaManagerPage from "@/pages/schema-manager";
-import SQLFormatterSettingsPage from "@/pages/sql-formatter-settings";
 import SQLFormatterPage from "@/pages/sql-formatter";
 
 import NotFound from "@/pages/not-found";
@@ -49,12 +41,6 @@ function Router() {
         <div className="flex-1 overflow-hidden" style={{ height: 'calc(100vh - 4rem)' }}>
           <Switch>
             <Route path="/" component={ChatPage} />
-            <Route path="/history" component={HistoryPage} />
-            <Route path="/favorites" component={FavoritesPage} />
-            <Route path="/shared" component={SharedPage} />
-            <Route path="/visualization" component={VisualizationPage} />
-            <Route path="/schema-manager" component={SchemaManagerPage} />
-            <Route path="/sql-formatter-settings" component={SQLFormatterSettingsPage} />
             <Route path="/sql-formatter" component={SQLFormatterPage} />
 
             <Route component={NotFound} />

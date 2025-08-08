@@ -7,7 +7,7 @@ import { useToast } from "@/hooks/use-toast";
 
 const SAMPLE_SQL = `SELECT u.user_id, u.user_name, COUNT(o.order_id) as order_count, SUM(o.total_amount) as total_spent FROM users u LEFT JOIN orders o ON u.user_id = o.user_id WHERE u.created_date >= DATE '2023-01-01' AND u.status = 'ACTIVE' GROUP BY u.user_id, u.user_name HAVING COUNT(o.order_id) > 0 ORDER BY total_spent DESC FETCH FIRST 10 ROWS ONLY;`;
 
-// [수정] SQL 키워드 하이라이팅 컴포넌트
+// SQL 키워드 하이라이팅 컴포넌트
 const SQLSyntaxHighlighter = ({ sql }: { sql: string }) => {
   // 'AS'를 keywords 배열에서 분리
   const keywords = [

@@ -1,31 +1,51 @@
-import type { Express } from "express";
-import { createServer, type Server } from "http";
+import type { Express, Request, Response, RequestHandler } from "express";
+import { type Server, type IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
+import { SessionData } from "express-session";
 import { storage } from "./storage";
-import { internalAIService } from "./services/sqlassistantai"; // 올바른 import 추가
-import { queryExecutor } from "./services/queryExecutor";
-import { seedDatabase } from "./seedData";
+import { internalAIService, SQLAssistantAIService } from "./services/sqlassistantai";
+import { generateLogId } from "./utils";
 import { nanoid } from "nanoid";
-import { z } from "zod";
-import {
-  insertDatabaseSchemaSchema,
-  insertQuerySchema,
-  insertSharedQuerySchema,
-  type SQLGenerationRequest,
-  type QueryExecutionRequest,
-  type ShareQueryRequest,
-} from "@shared/schema";
 import { exec } from "child_process";
 
-export async function registerRoutes(app: Express): Promise<Server> {
-  const httpServer = createServer(app);
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-  
-  // API 키 검증
-  const keyValidation = internalAIService.validateAPIKeys();
-  if (!keyValidation.isValid) {
-    console.warn('일부 AI API 키가 누락되었습니다:', keyValidation.missingKeys);
-  }
+// 프론트엔드에서 보내는 데이터의 타입을 정의
+interface SQLGenerationRequest {
+  naturalLanguage: string;
+  dialect: string;
+  cvrsId: string | null;
+  cvrsSeq: number;
+  schemaData?: any;
+}
+
+// WebSocket 객체에 session 정보를 포함하도록 타입을 확장
+interface WebSocketWithSession extends WebSocket {
+  session?: SessionData;
+}
+
+// registerRoutes가 Express 앱 대신 http.Server 인스턴스를 받도록 변경
+export async function registerRoutes(httpServer: Server, app: Express, sessionParser: RequestHandler): Promise<Server> {
+  const wss = new WebSocketServer({ noServer: true });
+
+  // upgrade 핸들러 내부에서 sessionParser를 먼저 실행
+  httpServer.on('upgrade', (request: IncomingMessage, socket, head) => {
+    // 1. 먼저 세션 미들웨어를 수동으로 실행하여 request 객체에 session 정보를 채웁니다.
+    sessionParser(request as Request, {} as Response, () => {
+      // 2. 세션 정보가 정상적으로 채워졌는지 확인합니다.
+      // @ts-ignore
+      if (request.session) {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          const wsWithSession = ws as WebSocketWithSession;
+          // @ts-ignore
+          wsWithSession.session = request.session;
+          wss.emit('connection', wsWithSession, request);
+        });
+      } else {
+        // 세션 정보가 없거나 유효하지 않으면 연결을 거부합니다.
+        console.log('WebSocket connection rejected: No valid session found.');
+        socket.destroy();
+      }
+    });
+  });
   
   // SQL 포맷팅을 위한 API 엔드포인트
   app.post('/api/format-sql', (req, res) => {
@@ -58,501 +78,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // --- WebSocket 로직 ---
   const activeRequests = new Map<string, boolean>();
 
-  wss.on('connection', (ws: WebSocket) => {
-    console.log('WebSocket client connected');
-    
+  wss.on('connection', (ws: WebSocketWithSession) => {
+    console.log('WebSocket client connected with session');
     ws.on('message', async (message: Buffer) => {
       try {
         const data = JSON.parse(message.toString());
-        
-        switch (data.type) {
-          case 'generate_sql':
-            await handleGenerateSQL(ws, data);
-            break;
-          case 'execute_query':
-            await handleExecuteQuery(ws, data);
-            break;
-          case 'explain_sql':
-            await handleExplainSQL(ws, data);
-            break;
-          case 'cancel_request':
-            handleCancelRequest(data.requestId);
-            break;
-          default:
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              message: 'Unknown message type: ' + data.type 
-            }));
+        if (data.type === 'generate_sql') {
+          await handleGenerateSQL(ws, data);
+        } else {
+          ws.send(JSON.stringify({ type: 'error', message: 'Unknown message type' }));
         }
       } catch (error) {
-        ws.send(JSON.stringify({ 
-          type: 'error', 
-          message: 'Failed to process message: ' + (error as Error).message 
-        }));
+        ws.send(JSON.stringify({ type: 'error', message: 'Failed to process message' }));
       }
     });
-    
-    ws.on('close', () => {
-      console.log('WebSocket client disconnected');
-      // 연결이 끊어지면 해당 클라이언트의 활성 요청들을 정리
-      // 실제 구현에서는 클라이언트별 요청 추적이 필요
-    });
-  });
-
-  // 요청 취소 핸들러
-  function handleCancelRequest(requestId: string) {
-    if (requestId && activeRequests.has(requestId)) {
-      activeRequests.set(requestId, false); // 요청을 취소됨으로 표시
-      console.log('Request cancelled:', requestId);
-    }
-  }
-
-  // Schema management
-  app.post('/api/schemas', async (req, res) => {
-    try {
-      const schemaData = insertDatabaseSchemaSchema.parse(req.body);
-      const schema = await storage.createSchema(schemaData);
-      res.json(schema);
-    } catch (error) {
-      res.status(400).json({ message: "Invalid schema data: " + (error as Error).message });
-    }
-  });
-
-  app.get('/api/schemas', async (req, res) => {
-    try {
-      // For development, use a default user ID
-      const userId = req.query.userId as string || "demo-user";
-      
-      const schemas = await storage.getUserSchemas(userId);
-      res.json(schemas);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch schemas: " + (error as Error).message });
-    }
-  });
-
-  app.get('/api/schemas/:id', async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const schema = await storage.getSchema(id);
-      
-      if (!schema) {
-        return res.status(404).json({ message: "Schema not found" });
-      }
-      
-      res.json(schema);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch schema: " + (error as Error).message });
-    }
-  });
-
-  app.put('/api/schemas/:id', async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const updates = insertDatabaseSchemaSchema.partial().parse(req.body);
-      const schema = await storage.updateSchema(id, updates);
-      
-      if (!schema) {
-        return res.status(404).json({ message: "Schema not found" });
-      }
-      
-      res.json(schema);
-    } catch (error) {
-      res.status(400).json({ message: "Invalid update data: " + (error as Error).message });
-    }
-  });
-
-  app.delete('/api/schemas/:id', async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const success = await storage.deleteSchema(id);
-      
-      if (!success) {
-        return res.status(404).json({ message: "Schema not found" });
-      }
-      
-      res.json({ message: "Schema deleted successfully" });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to delete schema: " + (error as Error).message });
-    }
-  });
-
-  // Query management
-  app.post('/api/queries', async (req, res) => {
-    try {
-      const queryData = insertQuerySchema.parse(req.body);
-      const query = await storage.createQuery(queryData);
-      res.json(query);
-    } catch (error) {
-      res.status(400).json({ message: "Invalid query data: " + (error as Error).message });
-    }
-  });
-
-  app.get('/api/queries', async (req, res) => {
-    try {
-      // For development, use a default user ID
-      const userId = req.query.userId as string || "demo-user";
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const search = req.query.search as string;
-      
-      let queries;
-      if (search) {
-        queries = await storage.searchQueries(userId, search);
-      } else {
-        queries = await storage.getUserQueries(userId, limit);
-      }
-      
-      res.json(queries);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch queries: " + (error as Error).message });
-    }
-  });
-
-  app.get('/api/queries/favorites', async (req, res) => {
-    try {
-      // For development, use a default user ID
-      const userId = req.query.userId as string || "demo-user";
-      
-      const queries = await storage.getUserFavoriteQueries(userId);
-      res.json(queries);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch favorite queries: " + (error as Error).message });
-    }
-  });
-
-  app.post('/api/queries/:id/favorite', async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const query = await storage.toggleQueryFavorite(id);
-      
-      if (!query) {
-        return res.status(404).json({ message: "Query not found" });
-      }
-      
-      res.json(query);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to toggle favorite: " + (error as Error).message });
-    }
-  });
-
-  app.delete('/api/queries/:id', async (req, res) => {
-    try {
-      const id = parseInt(req.params.id);
-      const success = await storage.deleteQuery(id);
-      
-      if (!success) {
-        return res.status(404).json({ message: "Query not found" });
-      }
-      
-      res.json({ message: "Query deleted successfully" });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to delete query: " + (error as Error).message });
-    }
-  });
-
-  // SQL generation - 내부 AI 서비스 사용
-  app.post('/api/sql/generate', async (req, res) => {
-    try {
-      const request = z.object({
-        naturalLanguage: z.string().min(1),
-        dialect: z.string().min(1),
-        schemaId: z.number().optional(),
-        schemaData: z.any().optional(),
-        mode: z.enum(['create', 'explain', 'grammar', 'comment', 'transform']).default('create'),
-      }).parse(req.body);
-      
-      let result;
-      
-      switch (request.mode) {
-        case 'explain':
-          const explanation = await internalAIService.explainSQL(request.naturalLanguage, request.dialect);
-          result = { explanation };
-          break;
-        case 'grammar':
-          const correctedSQL = await internalAIService.validateSQLGrammar(request.naturalLanguage, request.dialect);
-          result = { sqlQuery: correctedSQL };
-          break;
-        case 'comment':
-          const commentedSQL = await internalAIService.addSQLComments(request.naturalLanguage, request.dialect);
-          result = { sqlQuery: commentedSQL };
-          break;
-        case 'transform':
-          const transformedSQL = await internalAIService.convertSQLDialect(request.naturalLanguage, 'mysql', request.dialect);     
-          result = { sqlQuery: transformedSQL };
-          break;
-        case 'create':
-        default:
-          result = await internalAIService.generateSQL(request);
-          break;
-      }
-      
-      res.json(result);
-    } catch (error) {
-      res.status(400).json({ message: "Failed to generate SQL: " + (error as Error).message });
-    }
-  });
-
-  app.post('/api/sql/explain', async (req, res) => {
-    try {
-      const { sqlQuery, dialect } = z.object({
-        sqlQuery: z.string().min(1),
-        dialect: z.string().min(1),
-      }).parse(req.body);
-      
-      const explanation = await internalAIService.explainSQL(sqlQuery, dialect);
-      res.json({ explanation });
-    } catch (error) {
-      res.status(400).json({ message: "Failed to explain SQL: " + (error as Error).message });
-    }
-  });
-
-  app.post('/api/sql/convert', async (req, res) => {
-    try {
-      const { sqlQuery, fromDialect, toDialect } = z.object({
-        sqlQuery: z.string().min(1),
-        fromDialect: z.string().min(1),
-        toDialect: z.string().min(1),
-      }).parse(req.body);
-      
-      const convertedQuery = await internalAIService.convertSQLDialect(sqlQuery, fromDialect, toDialect);
-      res.json({ convertedQuery });
-    } catch (error) {
-      res.status(400).json({ message: "Failed to convert SQL: " + (error as Error).message });
-    }
-  });
-
-  app.post('/api/sql/comment', async (req, res) => {
-    try {
-      const { sqlQuery, dialect } = z.object({
-        sqlQuery: z.string().min(1),
-        dialect: z.string().min(1),
-      }).parse(req.body);
-      
-      const commentedQuery = await internalAIService.addSQLComments(sqlQuery, dialect);
-      res.json({ commentedQuery });
-    } catch (error) {
-      res.status(400).json({ message: "Failed to add comments to SQL: " + (error as Error).message });
-    }
-  });
-
-  // Query execution
-  app.post('/api/sql/execute', async (req, res) => {
-    try {
-      const request = z.object({
-        sqlQuery: z.string().min(1),
-        dialect: z.string().min(1),
-        schemaId: z.number().optional(),
-      }).parse(req.body);
-      
-      const result = await queryExecutor.executeQuery(request);
-      res.json(result);
-    } catch (error) {
-      res.status(400).json({ message: "Failed to execute query: " + (error as Error).message });
-    }
-  });
-
-  app.post('/api/sql/validate', async (req, res) => {
-    try {
-      const { sqlQuery, dialect } = z.object({
-        sqlQuery: z.string().min(1),
-        dialect: z.string().min(1),
-      }).parse(req.body);
-      
-      const result = await queryExecutor.validateQuery(sqlQuery, dialect);
-      res.json(result);
-    } catch (error) {
-      res.status(400).json({ message: "Failed to validate query: " + (error as Error).message });
-    }
-  });
-
-  // Query sharing
-  app.post('/api/queries/:id/share', async (req, res) => {
-    try {
-      const queryId = parseInt(req.params.id);
-      const { expiresAt } = z.object({
-        expiresAt: z.string().optional(),
-      }).parse(req.body);
-      
-      const shareId = nanoid(16);
-      const sharedQuery = await storage.createSharedQuery({
-        queryId,
-        shareId,
-        expiresAt: expiresAt ? new Date(expiresAt) : undefined,
-      });
-      
-      const baseUrl = req.protocol + '://' + req.get('host');
-      const shareUrl = `${baseUrl}/shared/${shareId}`;
-      
-      res.json({
-        shareId,
-        shareUrl,
-        expiresAt: sharedQuery.expiresAt,
-      });
-    } catch (error) {
-      res.status(400).json({ message: "Failed to share query: " + (error as Error).message });
-    }
-  });
-
-  app.get('/api/shared/:shareId', async (req, res) => {
-    try {
-      const shareId = req.params.shareId;
-      const sharedQuery = await storage.getSharedQueryWithQuery(shareId);
-      
-      if (!sharedQuery) {
-        return res.status(404).json({ message: "Shared query not found or expired" });
-      }
-      
-      res.json(sharedQuery);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch shared query: " + (error as Error).message });
-    }
-  });
-
-  // Cleanup task
-  app.post('/api/cleanup/expired-shares', async (req, res) => {
-    try {
-      const count = await storage.cleanupExpiredSharedQueries();
-      res.json({ message: `Cleaned up ${count} expired shared queries` });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to cleanup expired shares: " + (error as Error).message });
-    }
-  });
-
-  // Development seeding endpoint
-  app.post('/api/seed', async (req, res) => {
-    try {
-      await seedDatabase();
-      res.json({ message: "Database seeded successfully with sample data" });
-    } catch (error) {
-      res.status(500).json({ message: "Failed to seed database: " + (error as Error).message });
-    }
+    // 연결이 끊어지면 해당 클라이언트의 활성 요청들을 정리
+    // 실제 구현에서는 클라이언트별 요청 추적이 필요
+    ws.on('close', () => console.log('WebSocket client disconnected'));
   });
 
   // WebSocket message handlers
-  async function handleGenerateSQL(ws: WebSocket, data: any) {
-    const requestId = data.requestId || Date.now().toString();
+  async function handleGenerateSQL(ws: WebSocketWithSession, data: any) {
+    const requestId = data.requestId || `req_${Date.now()}`;
     activeRequests.set(requestId, true);
     
+    // 1. 세션 정보 가져오기
+    const session = ws.session;
+    if (!session || !session.loggedIn || !session.sqlAstntLogiLogId) {
+      ws.send(JSON.stringify({ type: 'error', message: '인증되지 않은 요청입니다. 다시 로그인해주세요.' }));
+      return;
+    }
+
     try {
       const request: SQLGenerationRequest = data.payload;
-      const mode = data.mode || 'create'; // 기본값을 'create'로 변경
+      const mode = (data.mode || 'create') as keyof SQLAssistantAIService['apiKeys'];
       
-      // 요청이 취소되었는지 확인
-      if (!activeRequests.get(requestId)) {
-        return; // 취소된 요청은 처리하지 않음
-      }
+      if (!activeRequests.get(requestId)) return;
+
+      // 2. 대화 ID 및 순번 관리
+      const cvrsId = data.cvrsId || `cvrs_${Date.now()}_${nanoid(8)}`;
+      let cvrsSeq = data.cvrsSeq || 0;
+
+      // 3. 사용자 질문 로그 기록
+      cvrsSeq++;
+      await storage.createCvrsLog({
+        sqlAstntCvrsLogId: generateLogId(),
+        cvrsId: cvrsId,
+        cvrsSeq: cvrsSeq,
+        cvrsMnboCd: 'USER',
+        sqlAstntLogiLogId: session.sqlAstntLogiLogId,
+        cvrsDt: new Date(),
+        aiFncCd: mode,
+        cvrsCt: request.naturalLanguage,
+        systRgiDt: new Date(),
+        systRgiPrafNo: session.prafNo,
+        systRgiOgnzNo: session.ognzNo,
+        systRgiSystCd: "ISA",
+        systRgiPrgrId: "SQL Assistant",
+        systChgDt: new Date(),
+        systChgPrafNo: session.prafNo,
+        systChgOgnzNo: session.ognzNo,
+        systChgSystCd: "ISA",
+        systChgPrgrId: "SQL Assistant",
+      });
+
+      // AI 서비스 호출
+      const aiResponseText = await internalAIService.processRequest(mode, request.naturalLanguage, request.schemaData);
+
+      if (!activeRequests.get(requestId)) return;
+
+      // 4. AI 답변 로그 기록
+      cvrsSeq++;
+      await storage.createCvrsLog({
+        sqlAstntCvrsLogId: generateLogId(),
+        cvrsId,
+        cvrsSeq,
+        cvrsMnboCd: 'AI',
+        sqlAstntLogiLogId: session.sqlAstntLogiLogId,
+        cvrsDt: new Date(),
+        aiFncCd: mode,
+        cvrsCt: aiResponseText,
+        systRgiDt: new Date(),
+        systRgiPrafNo: session.prafNo,
+        systRgiOgnzNo: session.ognzNo,
+        systRgiSystCd: "ISA",
+        systRgiPrgrId: "SQL Assistant",
+        systChgDt: new Date(),
+        systChgPrafNo: session.prafNo,
+        systChgOgnzNo: session.ognzNo,
+        systChgSystCd: "ISA",
+        systChgPrgrId: "SQL Assistant",
+      });
       
-      let result;
+      // 프론트엔드로 답변 전송
+      const resultPayload = {
+        mode, 
+        responseText: aiResponseText,
+        cvrsId, // 다음 요청에 사용하도록 클라이언트에 전달
+        cvrsSeq // 현재까지의 순번 전달
+      };
       
-      switch (mode) {
-        case 'explain':
-          const explanation = await internalAIService.explainSQL(request.naturalLanguage, request.dialect);
-          result = { explanation };
-          break;
-        case 'grammar':
-          const correctedSQL = await internalAIService.validateSQLGrammar(request.naturalLanguage, request.dialect);
-          result = { sqlQuery: correctedSQL, dialect: request.dialect, confidence: 0.8 };
-          break;
-        case 'comment':
-          const commentedSQL = await internalAIService.addSQLComments(request.naturalLanguage, request.dialect);
-          result = { sqlQuery: commentedSQL, dialect: request.dialect, confidence: 0.8 };
-          break;
-        case 'transform':
-          const transformedSQL = await internalAIService.convertSQLDialect(request.naturalLanguage, 'mysql', request.dialect);     
-          result = { sqlQuery: transformedSQL, dialect: request.dialect, confidence: 0.8 };
-          break;
-        case 'create':
-        default:
-          result = await internalAIService.generateSQL(request);
-          break;
-      }
-      
-      // 다시 한번 취소 확인
-      if (!activeRequests.get(requestId)) {
-        return;
-      }
-      
-      // Save query to database for history
-      try {
-        await storage.createQuery({
-          userId: "demo-user",
-          naturalLanguage: request.naturalLanguage,
-          sqlQuery: result.sqlQuery || '',
-          dialect: result.dialect || request.dialect,
-          explanation: result.explanation || '',
-          schemaId: request.schemaId,
-          isFavorite: false,
-        });
-      } catch (saveError) {
-        console.error('Failed to save query to database:', saveError);
-      }
-      
-      // 요청이 여전히 활성 상태인 경우에만 응답 전송
-      if (ws.readyState === WebSocket.OPEN && activeRequests.get(requestId)) {
-        ws.send(JSON.stringify({
-          type: 'sql_generated',
-          payload: result,
-          requestId: requestId,
-        }));
-      }
+      ws.send(JSON.stringify({
+        type: 'ai_response',
+        payload: resultPayload,
+        requestId: requestId,
+      }));
+
     } catch (error) {
-      if (ws.readyState === WebSocket.OPEN && activeRequests.get(requestId)) {
+      console.error(`Request ${requestId} failed:`, error);
+
+      if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'error',
-          message: 'Failed to generate SQL: ' + (error as Error).message,
-          requestId: requestId,
+          message: 'AI 요청 처리 중 오류가 발생했습니다: ' + (error as Error).message,
+          requestId: requestId
         }));
       }
     } finally {
-      // 요청 완료 후 정리
       activeRequests.delete(requestId);
-    }
-  }
-  
-  async function handleExecuteQuery(ws: WebSocket, data: any) {
-    try {
-      const request: QueryExecutionRequest = data.payload;
-      const result = await queryExecutor.executeQuery(request);
-      
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'query_executed',
-          payload: result,
-          requestId: data.requestId,
-        }));
-      }
-    } catch (error) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Failed to execute query: ' + (error as Error).message,
-          requestId: data.requestId,
-        }));
-      }
-    }
-  }
-
-  async function handleExplainSQL(ws: WebSocket, data: any) {
-    try {
-      const { sqlQuery, dialect } = data.payload;
-      const explanation = await internalAIService.explainSQL(sqlQuery, dialect);
-      
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'sql_explained',
-          payload: { explanation },
-          requestId: data.requestId,
-        }));
-      }
-    } catch (error) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'error',
-          message: 'Failed to explain SQL: ' + (error as Error).message,
-          requestId: data.requestId,
-        }));
-      }
     }
   }
 

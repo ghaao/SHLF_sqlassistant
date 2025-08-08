@@ -1,18 +1,13 @@
-# 애플리케이션을 위한 네트워크 정의
-networks:
-  sqlAssistant: # <-- 이름 변경
-    driver: bridge
-
 services:
   sql-assistant:
     image: sql-assistant:latest
     container_name: sql-assistant-app
-    ports:
-      - "18028:5000"
+    # ports:
+    #   - "18028:5000"
     environment:
       - NODE_ENV=production
       # - DATABASE_URL=postgresql://user:password@db:5432/mydatabase
-      - DATABASE_URL=mysql://A_APP_ISA:4rfvVFR$@10.172.33.140:19001/sql_assistant
+      - DATABASE_URL=mysql://A_APP_ISA:Tlsfkdlvm0701!@10.172.33.140:19001/sql_assistant
 
       # SQL ASSISTANT API KEY Setting
       - AI_API_BASE_URL=http://10.172.33.161:18020/v1/chat-messages
@@ -22,10 +17,9 @@ services:
       - SQL_ASSISTANT_API_KEY_SQL_TRANSFORMATION=app-FtuiuxFKVfMQOTykoTkHz68e
       - SQL_ASSISTANT_API_KEY_SQL_CREATION=app-MKiOOiO6IJtb3atcWOXtEfN8
       
+      # 애플리케이션이 사용할 포트를 환경 변수로 전달
+      - PORT=18027
+
       - TZ=Asia/Seoul
-    depends_on:
-      db: # <-- db 서비스를 의존하도록 수정
-        condition: service_healthy # db 서비스가 'healthy' 상태가 될 때까지 기다림
     restart: unless-stopped
-    networks:
-      - sqlAssistant
+    network_mode: "host" 

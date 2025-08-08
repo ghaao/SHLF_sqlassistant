@@ -9,7 +9,7 @@ services:
     container_name: sql-assistant-app
     image: sql-assistant:latest
     ports:
-      - "18028:5000"
+      - "18027:18027"
     environment:
       - NODE_ENV=production
       - DATABASE_URL=mysql://A_APP_ISA:4rfvVFR$@db:3306/sql_assistant
@@ -22,6 +22,9 @@ services:
       - SQL_ASSISTANT_API_KEY_SQL_TRANSFORMATION=app-FtuiuxFKVfMQOTykoTkHz68e
       - SQL_ASSISTANT_API_KEY_SQL_CREATION=app-MKiOOiO6IJtb3atcWOXtEfN8
 
+      # 애플리케이션이 사용할 포트를 환경 변수로 전달
+      - PORT=18027
+      
       - TZ=Asia/Seoul
     depends_on:
       db:

@@ -1,9 +1,16 @@
-// components/chat/input-area.tsx
-
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Paperclip, Code, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { FunctionName } from "@/types/functions";
+
+const placeholders = {
+  'SQL 생성': '자연어로 원하는 SQL을 설명해주세요 (예: "지난 주 주문 데이터를 조회해줘")',
+  'SQL 설명': '설명이 필요한 SQL 쿼리를 입력해주세요',
+  'SQL 문법 검증': '문법 검증이 필요한 SQL 쿼리를 입력해주세요',
+  'SQL 주석': '주석을 추가할 SQL 쿼리를 입력해주세요',
+  'SQL 변환': '변환할 SQL 쿼리를 입력해주세요'
+};
 
 interface InputAreaProps {
   value: string;
@@ -11,8 +18,7 @@ interface InputAreaProps {
   onSend: () => void;
   onKeyPress: (e: React.KeyboardEvent) => void;
   isLoading: boolean;
-  selectedDialect: string;
-  selectedFunction?: string;
+  selectedFunction?: FunctionName;
 }
 
 export default function InputArea({
@@ -21,7 +27,6 @@ export default function InputArea({
   onSend,
   onKeyPress,
   isLoading,
-  selectedDialect,
   selectedFunction,
 }: InputAreaProps) {
   
@@ -34,14 +39,7 @@ export default function InputArea({
       return "먼저 위에서 기능을 선택해주세요";
     }
     
-    const placeholders = {
-      'SQL 생성': '자연어로 원하는 SQL을 설명해주세요 (예: "지난 주 주문 데이터를 조회해줘")',
-      'SQL 설명': '설명이 필요한 SQL 쿼리를 입력해주세요',
-      'SQL 문법 검증': '문법 검증이 필요한 SQL 쿼리를 입력해주세요',
-      'SQL 주석': '주석을 추가할 SQL 쿼리를 입력해주세요',
-      'SQL 변환': '변환할 SQL 쿼리를 입력해주세요'
-    };
-    
+    // FunctionName 타입이므로 안전하게 조회 가능합니다.
     return placeholders[selectedFunction] || `${selectedFunction} 요청을 입력하세요...`;
   };
 
@@ -102,36 +100,10 @@ export default function InputArea({
             <div className="text-xs text-muted-foreground">
               현재 기능: <span className="font-medium text-foreground">{selectedFunction}</span>
             </div>
-          )}
-          
-          <div className="flex items-center space-x-2">
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="text-xs h-6 px-2"
-              disabled={isLoading}
-            >
-              <Paperclip className="w-3 h-3 mr-1" />
-              <span className="hidden sm:inline">Schema</span>
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="text-xs h-6 px-2"
-              disabled={isLoading}
-            >
-              <Code className="w-3 h-3 mr-1" />
-              <span className="hidden sm:inline">Raw SQL</span>
-            </Button>
-          </div>
+          )}          
         </div>
         
         <div className="flex items-center space-x-4">
-          {/* 선택된 데이터베이스 방언 표시 */}
-          <div className="text-xs text-muted-foreground">
-            DB: <span className="font-medium">{selectedDialect.toUpperCase()}</span>
-          </div>
-          
           {/* 키보드 단축키 안내 */}
           <div className="text-xs text-muted-foreground hidden md:block">
             <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl</kbd> + 
@@ -145,12 +117,12 @@ export default function InputArea({
       {value.length > 0 && (
         <div className="flex justify-between items-center text-xs text-muted-foreground">
           <span>
-            {value.length > 1000 ? (
+            {value.length > 1500 ? (
               <span className="text-orange-600">
-                입력이 너무 깁니다 ({value.length}/1000자)
+                입력이 너무 깁니다 ({value.length}/1500자)
               </span>
             ) : (
-              <span>{value.length}/1000자</span>
+              <span>{value.length}/1500자</span>
             )}
           </span>
           {isLoading && (

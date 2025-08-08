@@ -1,6 +1,6 @@
 // backend/FormatterWrapper.java
 
-// ❗️ 중요: 실제 jar 파일의 패키지 경로에 맞게 이 부분을 수정해야 할 수 있습니다.
+// 실제 jar 파일의 패키지 경로에 맞게 이 부분을 수정해야 할 수 있음.
 // 예: com.mycompany.sqlformatter.SQLForm 등
 import SQLinForm_API.SQLForm;
 

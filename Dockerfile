@@ -16,6 +16,13 @@ ENV LANGUAGE en_US:en
 ENV LC_ALL en_US.UTF-8
 
 WORKDIR /usr/src/app
+
+# package.json을 먼저 복사하여 의존성을 설치
+# 이렇게 하면 소스 코드가 변경되어도 매번 의존성을 새로 설치하지 않아 빌드 속도가 빨라짐
+COPY package*.json ./
+RUN npm install
+
+# 나머지 소스 코드 복사
 COPY . .
 
 # Java 소스 폴더로 이동하여 컴파일 진행
@@ -32,7 +39,7 @@ FROM node:20-slim
 
 # Java Runtime Environment (JRE) 설치
 RUN apt-get update && \
-    apt-get install -y openjdk-17-jre-headless locales && \
+    apt-get install -y openjdk-17-jre-headless locales iputils-ping curl && \
     sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && \
     locale-gen && \
     rm -rf /var/lib/apt/lists/*

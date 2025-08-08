@@ -1,67 +1,88 @@
-// pages/chat.tsx
-
 import { useState, useEffect } from "react";
 import ChatInterface from "@/components/chat/chat-interface";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { SQLGenerationResponse, QueryExecutionResponse } from "@shared/schema";
+import { FunctionId } from "@/types/functions";
+import { AlertTriangle } from "lucide-react";
+
+
+const ErrorOverlay = ({ message, onConfirm }: { message: string; onConfirm: () => void; }) => (
+  <div className="absolute inset-0 bg-background/80 backdrop-blur-sm flex items-center justify-center z-50 animate-in fade-in duration-300">
+    <div className="bg-card border border-destructive/20 rounded-lg shadow-xl max-w-md text-center p-6 m-4">
+      
+      {/* 아이콘 */}
+      <div className="mx-auto mb-4 h-12 w-12 flex items-center justify-center rounded-full bg-destructive/10">
+        <AlertTriangle className="h-6 w-6 text-destructive" />
+      </div>
+      
+      {/* 메시지 */}
+      <h2 className="text-xl font-bold text-foreground mb-2">오류가 발생했습니다</h2>
+      <p className="text-sm text-muted-foreground mb-6 whitespace-pre-wrap">
+        {/* 상세 오류 메시지를 보여줍니다. */}
+        {message}
+      </p>
+      
+      {/* 버튼 */}
+      <button
+        onClick={onConfirm}
+        className="w-full bg-primary text-primary-foreground h-10 px-4 py-2 rounded-md text-sm font-medium hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background"
+      >
+        페이지 새로고침
+      </button>
+
+    </div>
+  </div>
+);
+
+interface Message {
+  id: string;
+  type: 'user' | 'assistant';
+  content: string; // 일반 텍스트 답변을 위해 이 필드를 활용
+  timestamp: Date;
+  functionType?: FunctionId;
+}
 
 export default function ChatPage() {
-  const [selectedDialect, setSelectedDialect] = useState("oracle");
-  const [currentResult, setCurrentResult] = useState<QueryExecutionResponse | null>(null);
-  const [currentQuery, setCurrentQuery] = useState<SQLGenerationResponse | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState("");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
+  // 대화 상태 관리를 위한 state
+  const [cvrsId, setCvrsId] = useState<string | null>(null);
+  const [cvrsSeq, setCvrsSeq] = useState(0);
 
-  const { sendMessage, lastMessage, connectionStatus } = useWebSocket();
+  // useWebSocket 훅에서 connect 함수를 가져옴
+  const { sendMessage, lastMessage, connectionStatus, connect } = useWebSocket();
 
-  const handleSendMessage = async (message: string, functionType?: string) => {
-    const messageToSend = message || inputValue;
-    if (!messageToSend.trim()) return;
+  const handleSendMessage = (message: string, functionType?: FunctionId) => {
+    if (!message.trim() || !functionType) return;
 
+    // 1. 사용자 메시지를 먼저 화면에 추가
+    const userMessage: Message = {
+      id: `user_${Date.now()}`,
+      type: 'user',
+      content: message,
+      timestamp: new Date(),
+      functionType: functionType,
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    // 2. 로딩 상태 활성화 및 입력창 비우기
     setIsLoading(true);
-    setCurrentQuery(null);
-    setCurrentResult(null);
-    setInputValue("");
+    setInputValue(""); // 입력창 비우기
 
-    try {
-      // Generate unique request ID
-      const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      // Send SQL generation request with function type
-      sendMessage({
-        type: 'generate_sql',
-        mode: functionType || 'create',  
-        payload: {
-          naturalLanguage: messageToSend,
-          dialect: selectedDialect,
-        },
-        requestId, // Add request ID for tracking
-      });
-    } catch (error) {
-      console.error('Error sending message:', error);
-      setIsLoading(false);
-    }
-  };
-
-  const handleExecuteQuery = async (sqlQuery: string) => {
-    if (!sqlQuery.trim()) return;
-
-    setCurrentResult(null);
-
-    try {
-      const requestId = `exec_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      sendMessage({
-        type: 'execute_query',
-        payload: {
-          sqlQuery,
-          dialect: selectedDialect,
-        },
-        requestId,
-      });
-    } catch (error) {
-      console.error('Error executing query:', error);
-    }
+    // 3. 백엔드로 WebSocket 메시지 전송
+    sendMessage({
+      type: 'generate_sql',
+      mode: functionType,
+      payload: {
+        naturalLanguage: message,
+        dialect: "oracle", // 예시 dialect
+        cvrsId: cvrsId,
+        cvrsSeq: cvrsSeq,
+      },
+      requestId: `req_${Date.now()}`,
+    });
   };
 
   // Handle WebSocket messages with improved error handling
@@ -73,84 +94,63 @@ export default function ChatPage() {
         console.log('WebSocket message received:', data.type, data.requestId);
         
         switch (data.type) {
-          case 'sql_generated':
-            setCurrentQuery(data.payload);
-            setIsLoading(false);
-            break;
+          case 'ai_response':
+            const assistantMessage: Message = {
+              id: data.requestId || Date.now().toString(),
+              type: 'assistant',
+              content: data.payload.responseText, // 서버가 보낸 텍스트를 content에 저장
+              timestamp: new Date(),
+              functionType: data.payload.mode,
+            };
             
-          case 'query_executed':
-            setCurrentResult(data.payload);
+            setMessages(prev => [...prev, assistantMessage]);
+            // 백엔드로부터 받은 값으로 대화 상태 업데이트
+            setCvrsId(data.payload.cvrsId);
+            setCvrsSeq(data.payload.cvrsSeq);
+
+            setIsLoading(false);
             break;
             
           case 'error':
             console.error('WebSocket error:', data.message, data.requestId);
             setIsLoading(false);
-            
-            // Show user-friendly error message
-            if (data.message.includes('network') || data.message.includes('connection')) {
-              alert('네트워크 연결을 확인해주세요.');
-            } else if (data.message.includes('API key') || data.message.includes('authentication')) {
-              alert('AI 서비스 연결에 문제가 있습니다. 관리자에게 문의해주세요.');
-            } else {
-              alert('요청 처리 중 오류가 발생했습니다. 다시 시도해주세요.');
-            }
+
+            setErrorMessage(data.message || '알 수 없는 오류가 발생했습니다.');
             break;
-            
-          case 'request_cancelled':
-            console.log('Request cancelled:', data.requestId);
-            setIsLoading(false);
-            setCurrentQuery(null);
-            setCurrentResult(null);
-            break;
-            
-          default:
-            console.warn('Unknown message type:', data.type);
         }
       } catch (error) {
         console.error('Error parsing WebSocket message:', error);
         setIsLoading(false);
+        setErrorMessage('서버로부터 받은 메시지를 처리할 수 없습니다.');
       }
     }
   }, [lastMessage]);
 
   // Connection status monitoring
-  useEffect(() => {
-    if (connectionStatus === 'disconnected') {
-      setIsLoading(false);
-      console.warn('WebSocket disconnected - stopping loading states');
-    }
-  }, [connectionStatus]);
-
-  // Auto-reconnect logic
-  useEffect(() => {
-    let reconnectTimer: NodeJS.Timeout;
-    
-    if (connectionStatus === 'disconnected') {
-      reconnectTimer = setTimeout(() => {
-        console.log('Attempting to reconnect WebSocket...');
-        window.location.reload(); // Simple reconnect strategy
-      }, 5000);
-    }
-    
-    return () => {
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-    };
-  }, [connectionStatus]);
+  useEffect(() => { connect(); }, [connect]);
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex h-full overflow-hidden relative">
+      {/* errorMessage가 있을 때만 ErrorOverlay를 렌더링 */}
+      {errorMessage && (
+        <ErrorOverlay 
+          message={errorMessage} 
+          onConfirm={() => window.location.reload()} 
+        />
+      )}
+
       <ChatInterface
+        messages={messages} // 수정된 messages를 props로 전달
         onSendMessage={handleSendMessage}
-        onExecuteQuery={handleExecuteQuery}
-        selectedDialect={selectedDialect}
-        currentQuery={currentQuery}
-        currentResult={currentResult}
         isLoading={isLoading}
-        connectionStatus={connectionStatus}
         inputValue={inputValue}
         setInputValue={setInputValue}
+        // 대화 상태 리셋을 위한 콜백 함수 전달
+        onFunctionChange={() => {
+          setCvrsId(null);
+          setCvrsSeq(0);
+          setMessages([]); // 새 기능 선택 시 기존 메시지 초기화
+        }}
       />
     </div>
   );

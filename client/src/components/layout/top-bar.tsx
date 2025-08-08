@@ -32,7 +32,7 @@ export default function TopBar({
             <Menu className="w-5 h-5" />
           </Button>
         )}
-        <h2 className="text-base md:text-lg font-semibold">Natural Language to SQL</h2>
+        <h2 className="text-base md:text-lg font-semibold">ShinhanLife</h2>
         <Badge variant="outline" className="text-xs">
           <Zap className="w-3 h-3 mr-1" />
           AI Powered
